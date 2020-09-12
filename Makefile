@@ -26,7 +26,7 @@ dcclean: clean-db-container
 
 # Tagger
 build-tagger:
-	docker build -t tmv-tagger:latest -f Tagger-Dockerfile .
+	docker build -t "${TMV_TAGGER_IMAGE_NAME}:${TMV_TAGGER_IMAGE_VERSION}" -f Tagger-Dockerfile .
 tbuild: build-tagger
 
 start-tagger:
