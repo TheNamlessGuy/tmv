@@ -57,7 +57,7 @@ def create_tables():
     cur.execute('CREATE SCHEMA IF NOT EXISTS {}'.format(names['schema']))
     cur.execute('CREATE TABLE IF NOT EXISTS {} (id bigserial PRIMARY KEY, value text UNIQUE NOT NULL)'.format(names['multitags']))
     cur.execute('CREATE TABLE IF NOT EXISTS {} (id bigserial PRIMARY KEY, name text NOT NULL, value bigint NOT NULL, UNIQUE(name, value))'.format(names['valuetags']))
-    cur.execute('CREATE TABLE IF NOT EXISTS {} (id bigserial PRIMARY KEY, value text UNIQUE NOT NULL, tags text[])'.format(names['tagged']))
+    cur.execute('CREATE TABLE IF NOT EXISTS {} (id bigserial PRIMARY KEY, value text UNIQUE NOT NULL)'.format(names['tagged']))
     cur.execute('CREATE TABLE IF NOT EXISTS {} (tagged_id bigint NOT NULL REFERENCES {}(id), tag_id bigint NOT NULL REFERENCES {}(id), UNIQUE(tagged_id, tag_id))'.format(names['tagged_multitags'], names['tagged'], names['multitags']))
     cur.execute('CREATE TABLE IF NOT EXISTS {} (tagged_id bigint NOT NULL REFERENCES {}(id), tag_id bigint NOT NULL REFERENCES {}(id), UNIQUE(tagged_id, tag_id))'.format(names['tagged_valuetags'], names['tagged'], names['valuetags']))
     conn.commit()
@@ -114,7 +114,7 @@ def get_query_ids(value, cur, names, forbidden_ids):
   comparator = 'LIKE' if '%' in value else '='
 
   cur.execute("""
-SELECT DISTINCT t.id FROM """ + names['tagged'] + """ AS t WHERE """ + ('NOT t.id IN {} AND '.format(forbidden_ids_string) if len(forbidden_ids) > 0 else '') + """ (%s """ + comparator + """ ANY(t.tags) OR t.id IN (
+SELECT DISTINCT t.id FROM """ + names['tagged'] + """ AS t WHERE """ + ('NOT t.id IN {} AND '.format(forbidden_ids_string) if len(forbidden_ids) > 0 else '') + """t.id IN (
   SELECT DISTINCT t.id FROM """ + names['tagged'] + """ AS t
     JOIN """ + names['tagged_multitags'] + """ AS mtt ON mtt.tagged_id = t.id
     JOIN """ + names['multitags'] + """ AS mt ON mtt.tag_id = mt.id
@@ -124,7 +124,7 @@ SELECT DISTINCT t.id FROM """ + names['tagged'] + """ AS t WHERE """ + ('NOT t.i
     JOIN """ + names['tagged_valuetags'] + """ AS vtt ON vtt.tagged_id = t.id
     JOIN """ + names['valuetags'] + """ AS vt ON vtt.tag_id = vt.id
     WHERE CONCAT(vt.name, CAST(vt.value AS text)) """ + comparator + """ %s
-))""", (value, value, value))
+)""", (value, value))
 
   retval = []
   row = cur.fetchone()
@@ -134,10 +134,6 @@ SELECT DISTINCT t.id FROM """ + names['tagged'] + """ AS t WHERE """ + ('NOT t.i
 
   return retval
 
-# D = SELECT DISTINCT t.id FROM tmv.tagged AS t
-#   JOIN tmv.tagged_valuetags AS vtt ON vtt.tagged_id = t.id
-#   JOIN tmv.valuetags AS vt ON vtt.tag_id = vt.id
-#   WHERE vt.name = 'jkl' AND vt.value > 10
 def get_value_query_ids(value, cur, names, forbidden_ids):
   forbidden_ids_string = '(' + ','.join(str(i) for i in forbidden_ids) + ')'
   [name, value] = value.split('{')
@@ -164,7 +160,7 @@ SELECT DISTINCT t.id FROM """ + names['tagged'] + """ AS t""" + (' WHERE NOT t.i
 
 # abc -def ghi:% jkl{>10} -mno{<=5}
 # ============ LEADS TO ====================
-# A = SELECT DISTINCT t.id FROM tmv.tagged AS t WHERE 'abc' = ANY(t.tags) OR t.id IN (
+# A = SELECT DISTINCT t.id FROM tmv.tagged AS t WHERE t.id IN (
 #   SELECT DISTINCT t.id FROM tmv.tagged AS t
 #     JOIN tmv.tagged_tags AS mtt ON mtt.tagged_id = t.id
 #     JOIN tmv.tags AS mt ON mtt.tag_id = mt.id
@@ -176,7 +172,7 @@ SELECT DISTINCT t.id FROM """ + names['tagged'] + """ AS t""" + (' WHERE NOT t.i
 #     WHERE CONCAT(vt.name, CAST(vt.value AS text)) = 'abc'
 # )
 #
-# B = SELECT DISTINCT t.id FROM tmv.tagged AS t WHERE 'def' = ANY(t.tags) OR t.id IN (
+# B = SELECT DISTINCT t.id FROM tmv.tagged AS t WHERE t.id IN (
 #   SELECT DISTINCT t.id FROM tmv.tagged AS t
 #     JOIN tmv.tagged_tags AS mtt ON mtt.tagged_id = t.id
 #     JOIN tmv.tags AS mt ON mtt.tag_id = mt.id
@@ -188,7 +184,7 @@ SELECT DISTINCT t.id FROM """ + names['tagged'] + """ AS t""" + (' WHERE NOT t.i
 #     WHERE CONCAT(vt.name, CAST(vt.value AS text)) = 'def'
 # )
 #
-# C = SELECT DISTINCT t.id FROM tmv.tagged AS t WHERE 'ghi:%' LIKE ANY(t.tags) OR t.id IN (
+# C = SELECT DISTINCT t.id FROM tmv.tagged AS t WHERE t.id IN (
 #   SELECT DISTINCT t.id FROM tmv.tagged AS t
 #     JOIN tmv.tagged_tags AS mtt ON mtt.tagged_id = t.id
 #     JOIN tmv.tags AS mt ON mtt.tag_id = mt.id
@@ -257,7 +253,7 @@ def search(query):
     if conn:
       conn.close()
 
-def get(tagged, self_tags, value_tags, multi_tags):
+def get(tagged, value_tags, multi_tags):
   conn = None
   cur = None
 
@@ -266,21 +262,21 @@ def get(tagged, self_tags, value_tags, multi_tags):
     cur = conn.cursor()
     names = get_table_names()
 
-    cur.execute('SELECT id FROM ' + names['tagged'] + ' WHERE value = %s', (tagged,))
+    cur.execute('SELECT id FROM ' + names['tagged'] + ' WHERE value = ANY(%s)', (tagged,))
     tagged_id = cur.fetchone()
     if tagged_id is None:
       raise TMVException(TMVException.ID_TAGGED_NOT_FOUND, 'The given value \'{}\' could not be found in the database'.format(tagged))
-    tagged_id = tagged_id[0]
+
+    tagged_ids = []
+    while tagged_id:
+      tagged_ids.append(tagged_id[0])
+      tagged_id = cur.fetchone()
 
     retval = {}
 
-    if self_tags:
-      cur.execute('SELECT tags FROM ' + names['tagged'] + ' WHERE id = %s', (tagged_id,))
-      retval['self'] = cur.fetchone()[0]
-
     if value_tags:
       # SELECT v.name, v.value FROM tmv.valuetags AS v, tmv.tagged_valuetags AS tv WHERE tv.tag_id = v.id AND tv.tagged_id = {tagged_id}
-      cur.execute('SELECT v.name, v.value FROM ' + names['valuetags'] + ' AS v, ' + names['tagged_valuetags'] + ' AS tv WHERE tv.tag_id = v.id AND tv.tagged_id = %s', (tagged_id,))
+      cur.execute('SELECT v.name, v.value FROM ' + names['valuetags'] + ' AS v, ' + names['tagged_valuetags'] + ' AS tv WHERE tv.tag_id = v.id AND tv.tagged_id = ANY(%s)', (tagged_ids,))
       retval['value'] = []
       row = cur.fetchone()
       while row:
@@ -289,7 +285,7 @@ def get(tagged, self_tags, value_tags, multi_tags):
 
     if multi_tags:
       # SELECT v.name, v.value FROM tmv.tags AS v, tmv.tagged_tags AS tv WHERE tv.tag_id = v.id AND tv.tagged_id = {tagged_id}
-      cur.execute('SELECT v.value FROM ' + names['multitags'] + ' AS v, ' + names['tagged_multitags'] + ' AS tv WHERE tv.tag_id = v.id AND tv.tagged_id = %s', (tagged_id,))
+      cur.execute('SELECT v.value FROM ' + names['multitags'] + ' AS v, ' + names['tagged_multitags'] + ' AS tv WHERE tv.tag_id = v.id AND tv.tagged_id = ANY(%s)', (tagged_ids,))
       retval['multi'] = []
       row = cur.fetchone()
       while row:
@@ -303,11 +299,10 @@ def get(tagged, self_tags, value_tags, multi_tags):
     if conn:
       conn.close()
 
-def tag(tagged, self_tags, value_tags, multi_tags):
+def tag(tagged, value_tags, multi_tags):
   conn = None
   cur = None
 
-  check_if_tags_are_valid(self_tags, 'Self')
   check_if_tags_are_valid(value_tags, 'Value')
   check_if_tags_are_valid(multi_tags, 'Multi')
 
@@ -317,24 +312,13 @@ def tag(tagged, self_tags, value_tags, multi_tags):
     names = get_table_names()
 
     # Tagged
-    cur.execute('INSERT INTO ' + names['tagged'] + ' (value) VALUES (%s) ON CONFLICT DO NOTHING RETURNING id, tags', (tagged,))
+    cur.execute('INSERT INTO ' + names['tagged'] + ' (value) VALUES (%s) ON CONFLICT DO NOTHING RETURNING id', (tagged,))
 
     tagged_id = cur.fetchone()
     if tagged_id is None:
-      cur.execute('SELECT id, tags FROM ' + names['tagged'] + ' WHERE value = %s', (tagged,))
+      cur.execute('SELECT id FROM ' + names['tagged'] + ' WHERE value = %s', (tagged,))
       tagged_id = cur.fetchone()
-    tagged_tags = tagged_id[1]
     tagged_id = tagged_id[0]
-
-    # Self tags
-    if tagged_tags is None: # tagged had no self tags before
-      tagged_tags = []
-
-    for tag in self_tags:
-      if tag not in tagged_tags:
-        tagged_tags.append(tag)
-
-    cur.execute('UPDATE ' + names['tagged'] + ' SET tags = %s WHERE id = %s', (tagged_tags, tagged_id))
 
     # Value tags
     for tag in value_tags:
@@ -367,7 +351,7 @@ def tag(tagged, self_tags, value_tags, multi_tags):
     if conn:
       conn.close()
 
-def untag(tagged, self_tags, value_tags, multi_tags):
+def untag(tagged, value_tags, multi_tags):
   conn = None
   cur = None
 
@@ -382,11 +366,6 @@ def untag(tagged, self_tags, value_tags, multi_tags):
       raise TMVException(TMVException.ID_TAGGED_NOT_FOUND, 'The given value \'{}\' could not be found in the database'.format(tagged))
     tagged_tags = tagged_id[1]
     tagged_id = tagged_id[0]
-
-    # Self tags
-    if tagged_tags is not None and len(self_tags) > 0:
-      tagged_tags = [tag for tag in tagged_tags if tag not in self_tags]
-      cur.execute('UPDATE ' + names['tagged'] + ' SET tags = %s WHERE id = %s', (tagged_tags, tagged_id))
 
     # Value tags
     for tag in value_tags:

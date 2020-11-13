@@ -10,7 +10,6 @@ Send a post request to /tag with a payload formatted as follows:
 ```json
 {
   "value": "value to tag",
-  "self_tags": ["tag1", "tag2"],
   "multi_tags": ["tag3", "tag4"],
   "value_tags": [{"name": "tagN", "value": 5}, {"name": "tagN", "value": 6}]
 }
@@ -23,7 +22,13 @@ You can then send a POST request to /get with a payload like:
 ```json
 {
   "value": "value to get",
-  "tags": ["self", "multi", "value"]
+  "tags": ["multi", "value"]
+}
+```
+or
+```json
+{
+  "value": ["values", "to", "get"],
 }
 ```
 Where the "tags" field is optional (defaults to all tag types), but if it's specified it should have at least one of the three given values.
@@ -59,13 +64,9 @@ Recommended: GNU Make
 
 ## Tag types
 
-### Self tags
-
-Self tags are for tags that are unique to this specific value (titles, serial numbers, etc.). These will be stored along with the value itself.
-
 ### Multi tags
 
-Multi tags are for tags that can be found for multiple values ("author", "artist", etc.). These will be stored in a many-to-many way.
+Any tag that doesn't fit into value tags
 
 ### Value tags
 

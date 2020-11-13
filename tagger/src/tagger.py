@@ -69,8 +69,8 @@ def verify_input(request, expected):
         raise TMVException(TMVException.ID_FAULTY_INPUT, 'Parameter \'{}\' cannot be empty'.format(e['name']))
       else:
         for v in param:
-          if not v in ['self', 'value', 'multi']:
-            raise TMVException(TMVException.ID_FAULTY_INPUT, 'Parameter \'{}\' can only contain \'self\', \'value\', or \'multi\''.format(e['name']))
+          if not v in ['value', 'multi']:
+            raise TMVException(TMVException.ID_FAULTY_INPUT, 'Parameter \'{}\' can only contain \'value\', or \'multi\''.format(e['name']))
 
 
 # Expected request format:
@@ -83,7 +83,6 @@ def verify_input(request, expected):
 #
 # {
 #   ?'response': {
-#     ?'self': STRING[],
 #     ?'value': [{'name': STRING, 'value': INTEGER}, ...]
 #     ?'multi': STRING[]
 #   },
@@ -116,9 +115,9 @@ async def search(request):
 # Expected request format:
 #
 # {
-#   'value': STRING,
+#   ?'value': STRING,
+#   ?'value': STRING[],
 #   ?'tags': [
-#     ?'self',
 #     ?'value',
 #     ?'multi'
 #   ]
@@ -128,7 +127,6 @@ async def search(request):
 #
 # {
 #   ?'response': {
-#     ?'self': STRING[],
 #     ?'value': [{'name': STRING, 'value': INTEGER}, ...]
 #     ?'multi': STRING[]
 #   },
@@ -155,11 +153,11 @@ async def get(request):
     }])
 
     tags = request_body['tags'] if 'tags' in request_body else None
-    self_tags = True if tags is None or 'self' in tags else False
     value = True if tags is None or 'value' in tags else False
     multi = True if tags is None or 'multi' in tags else False
 
-    result = database.get(request_body['value'], self_tags, value, multi)
+    tagged = request_body['value'] if isinstance(request_body['value'], list) else [request_body['value']]
+    result = database.get(tagged, value, multi)
     return json({'response': result})
   except TMVException as e:
     return error(e.error_id, e.error_msg)
@@ -171,7 +169,6 @@ async def get(request):
 #
 # {
 #   'value': STRING,
-#   ?'self_tags': STRING[],
 #   ?'multi_tags': STRING[],
 #   ?'value_tags': [{'name': STRING, 'value': NUMBER}, ...],
 # }
@@ -196,11 +193,6 @@ async def tag(request):
       'required': True,
       'type': 'str',
     }, {
-      'name': 'self_tags',
-      'required': False,
-      'type': 'str[]',
-      'empty': False
-    }, {
       'name': 'multi_tags',
       'required': False,
       'type': 'str[]',
@@ -212,11 +204,10 @@ async def tag(request):
       'empty': False
     }])
 
-    self_tags = request_body['self_tags'] if 'self_tags' in request_body else []
     value_tags = request_body['value_tags'] if 'value_tags' in request_body else []
     multi_tags = request_body['multi_tags'] if 'multi_tags' in request_body else []
 
-    database.tag(request_body['value'], self_tags, value_tags, multi_tags)
+    database.tag(request_body['value'], value_tags, multi_tags)
     return json({'success': True})
   except TMVException as e:
     return error(e.error_id, e.error_msg)
@@ -228,7 +219,6 @@ async def tag(request):
 #
 # {
 #   'value': STRING,
-#   ?'self_tags': STRING[],
 #   ?'multi_tags': STRING[],
 #   ?'value_tags': [{'name': STRING, 'value': NUMBER}, ...],
 # }
@@ -253,11 +243,6 @@ async def untag(request):
       'required': True,
       'type': 'str',
     }, {
-      'name': 'self_tags',
-      'required': False,
-      'type': 'str[]',
-      'empty': False
-    }, {
       'name': 'multi_tags',
       'required': False,
       'type': 'str[]',
@@ -269,11 +254,10 @@ async def untag(request):
       'empty': False
     }])
 
-    self_tags = request_body['self_tags'] if 'self_tags' in request_body else []
     value_tags = request_body['value_tags'] if 'value_tags' in request_body else []
     multi_tags = request_body['multi_tags'] if 'multi_tags' in request_body else []
 
-    database.untag(request_body['value'], self_tags, value_tags, multi_tags)
+    database.untag(request_body['value'], value_tags, multi_tags)
     return json({'success': True})
   except TMVException as e:
     return error(e.error_id, e.error_msg)
