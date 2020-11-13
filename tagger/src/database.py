@@ -262,7 +262,7 @@ def get(tagged, value_tags, multi_tags):
     cur = conn.cursor()
     names = get_table_names()
 
-    cur.execute('SELECT id, name FROM ' + names['tagged'] + ' WHERE value = ANY(%s)', (tagged,))
+    cur.execute('SELECT id, value FROM ' + names['tagged'] + ' WHERE value = ANY(%s)', (tagged,))
     tagged_id = cur.fetchone()
     if tagged_id is None:
       raise TMVException(TMVException.ID_TAGGED_NOT_FOUND, 'The given value \'{}\' could not be found in the database'.format(tagged))
