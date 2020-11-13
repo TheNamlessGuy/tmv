@@ -267,9 +267,9 @@ def get(tagged, value_tags, multi_tags):
       cur.execute('SELECT id FROM ' + names['tagged'] + ' WHERE value = %s', (t,))
       tagged_id = cur.fetchone()
       if tagged_id:
-        tagged_ids.append(tagged_id[0], t)
+        tagged_ids.append([tagged_id[0], t])
       else:
-        tagged_ids.append(None, t)
+        tagged_ids.append([None, t])
 
     retval = {}
     for tagged_id in tagged_ids:
