@@ -156,7 +156,8 @@ async def get(request):
     verify_input(request_body, [{
       'name': 'value',
       'required': True,
-      'type': 'str,str[]'
+      'type': 'str,str[]',
+      'empty': False
     }, {
       'name': 'tags',
       'required': False,
