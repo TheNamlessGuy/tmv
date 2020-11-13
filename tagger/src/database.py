@@ -277,7 +277,12 @@ def get(tagged, value_tags, multi_tags):
       id = tagged_id[0]
       retval[name] = {}
 
-      if id is None: continue
+      if id is None:
+        if value_tags:
+          retval[name]['value'] = []
+        if multi_tags:
+          retval[name]['multi'] = []
+        continue
 
       if value_tags:
         # SELECT v.name, v.value FROM tmv.valuetags AS v, tmv.tagged_valuetags AS tv WHERE tv.tag_id = v.id AND tv.tagged_id = {tagged_id}
