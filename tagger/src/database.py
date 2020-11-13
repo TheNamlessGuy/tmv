@@ -370,11 +370,10 @@ def untag(tagged, value_tags, multi_tags):
     cur = conn.cursor()
     names = get_table_names()
 
-    cur.execute('SELECT id, tags FROM ' + names['tagged'] + ' WHERE value = %s', (tagged,))
+    cur.execute('SELECT id FROM ' + names['tagged'] + ' WHERE value = %s', (tagged,))
     tagged_id = cur.fetchone()
     if tagged_id is None:
       raise TMVException(TMVException.ID_TAGGED_NOT_FOUND, 'The given value \'{}\' could not be found in the database'.format(tagged))
-    tagged_tags = tagged_id[1]
     tagged_id = tagged_id[0]
 
     # Value tags
