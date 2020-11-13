@@ -49,6 +49,16 @@ def verify_input(request, expected):
         for v in param:
           if not isinstance(v, str):
             raise TMVException(TMVException.ID_FAULTY_INPUT, 'Parameter \'{}\' not a string array as expected'.format(e['name']))
+    elif e['type'] == 'str,str[]':
+      if not isinstance(param, str):
+        if not isinstance(param, list):
+          raise TMVException(TMVException.ID_FAULTY_INPUT, 'Parameter \'{}\' not a string or string array as expected'.format(e['name']))
+        elif len(param) < 1 and not e['empty']:
+          raise TMVException(TMVException.ID_FAULTY_INPUT, 'Parameter \'{}\' cannot be empty'.format(e['name']))
+        else:
+          for v in param:
+            if not isinstance(v, str):
+              raise TMVException(TMVException.ID_FAULTY_INPUT, 'Parameter \'{}\' not a string or string array as expected'.format(e['name']))
     elif e['type'] == 'val[]':
       if not isinstance(param, list):
         raise TMVException(TMVException.ID_FAULTY_INPUT, 'Parameter \'{}\' not an array as expected'.format(e['name']))
@@ -127,8 +137,10 @@ async def search(request):
 #
 # {
 #   ?'response': {
-#     ?'value': [{'name': STRING, 'value': INTEGER}, ...]
-#     ?'multi': STRING[]
+#     <value>: {
+#       ?'value': [{'name': STRING, 'value': INTEGER}, ...]
+#       ?'multi': STRING[]
+#     }, ...
 #   },
 #   ?'error_id': INTEGER,
 #   ?'error_msg': STRING,
@@ -144,7 +156,7 @@ async def get(request):
     verify_input(request_body, [{
       'name': 'value',
       'required': True,
-      'type': 'str'
+      'type': 'str,str[]'
     }, {
       'name': 'tags',
       'required': False,

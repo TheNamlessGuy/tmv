@@ -262,35 +262,39 @@ def get(tagged, value_tags, multi_tags):
     cur = conn.cursor()
     names = get_table_names()
 
-    cur.execute('SELECT id FROM ' + names['tagged'] + ' WHERE value = ANY(%s)', (tagged,))
+    cur.execute('SELECT id, name FROM ' + names['tagged'] + ' WHERE value = ANY(%s)', (tagged,))
     tagged_id = cur.fetchone()
     if tagged_id is None:
       raise TMVException(TMVException.ID_TAGGED_NOT_FOUND, 'The given value \'{}\' could not be found in the database'.format(tagged))
 
     tagged_ids = []
     while tagged_id:
-      tagged_ids.append(tagged_id[0])
+      tagged_ids.append([tagged_id[0], tagged_id[1]])
       tagged_id = cur.fetchone()
 
     retval = {}
+    for tagged_id in tagged_ids:
+      name = tagged_id[1]
+      id = tagged_id[0]
+      retval[name] = {}
 
-    if value_tags:
-      # SELECT v.name, v.value FROM tmv.valuetags AS v, tmv.tagged_valuetags AS tv WHERE tv.tag_id = v.id AND tv.tagged_id = {tagged_id}
-      cur.execute('SELECT v.name, v.value FROM ' + names['valuetags'] + ' AS v, ' + names['tagged_valuetags'] + ' AS tv WHERE tv.tag_id = v.id AND tv.tagged_id = ANY(%s)', (tagged_ids,))
-      retval['value'] = []
-      row = cur.fetchone()
-      while row:
-        retval['value'].append({'name': row[0], 'value': row[1]})
+      if value_tags:
+        # SELECT v.name, v.value FROM tmv.valuetags AS v, tmv.tagged_valuetags AS tv WHERE tv.tag_id = v.id AND tv.tagged_id = {tagged_id}
+        cur.execute('SELECT v.name, v.value FROM ' + names['valuetags'] + ' AS v, ' + names['tagged_valuetags'] + ' AS tv WHERE tv.tag_id = v.id AND tv.tagged_id = %s', (id,))
+        retval[name]['value'] = []
         row = cur.fetchone()
+        while row:
+          retval[name]['value'].append({'name': row[0], 'value': row[1]})
+          row = cur.fetchone()
 
-    if multi_tags:
-      # SELECT v.name, v.value FROM tmv.tags AS v, tmv.tagged_tags AS tv WHERE tv.tag_id = v.id AND tv.tagged_id = {tagged_id}
-      cur.execute('SELECT v.value FROM ' + names['multitags'] + ' AS v, ' + names['tagged_multitags'] + ' AS tv WHERE tv.tag_id = v.id AND tv.tagged_id = ANY(%s)', (tagged_ids,))
-      retval['multi'] = []
-      row = cur.fetchone()
-      while row:
-        retval['multi'].append(row[0])
+      if multi_tags:
+        # SELECT v.name, v.value FROM tmv.tags AS v, tmv.tagged_tags AS tv WHERE tv.tag_id = v.id AND tv.tagged_id = {tagged_id}
+        cur.execute('SELECT v.value FROM ' + names['multitags'] + ' AS v, ' + names['tagged_multitags'] + ' AS tv WHERE tv.tag_id = v.id AND tv.tagged_id = %s', (id,))
+        retval[name]['multi'] = []
         row = cur.fetchone()
+        while row:
+          retval[name]['multi'].append(row[0])
+          row = cur.fetchone()
 
     return retval
   finally:
