@@ -262,21 +262,22 @@ def get(tagged, value_tags, multi_tags):
     cur = conn.cursor()
     names = get_table_names()
 
-    cur.execute('SELECT id, value FROM ' + names['tagged'] + ' WHERE value = ANY(%s)', (tagged,))
-    tagged_id = cur.fetchone()
-    if tagged_id is None:
-      raise TMVException(TMVException.ID_TAGGED_NOT_FOUND, 'The given value \'{}\' could not be found in the database'.format(tagged))
-
     tagged_ids = []
-    while tagged_id:
-      tagged_ids.append([tagged_id[0], tagged_id[1]])
+    for t in tagged:
+      cur.execute('SELECT id FROM ' + names['tagged'] + ' WHERE value = %s', (t,))
       tagged_id = cur.fetchone()
+      if tagged_id:
+        tagged_ids.append(tagged_id[0], t)
+      else:
+        tagged_ids.append(None, t)
 
     retval = {}
     for tagged_id in tagged_ids:
       name = tagged_id[1]
       id = tagged_id[0]
       retval[name] = {}
+
+      if id is None: continue
 
       if value_tags:
         # SELECT v.name, v.value FROM tmv.valuetags AS v, tmv.tagged_valuetags AS tv WHERE tv.tag_id = v.id AND tv.tagged_id = {tagged_id}
