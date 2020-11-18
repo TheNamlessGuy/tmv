@@ -40,6 +40,9 @@ def verify_input(request, expected):
     if e['type'] == 'str':
       if not isinstance(param, str):
         raise TMVException(TMVException.ID_FAULTY_INPUT, 'Parameter \'{}\' not a string as expected'.format(e['name']))
+    elif e['type'] == 'bool':
+      if not isinstance(param, bool):
+        raise TMVException(TMVException.ID_FAULTY_INPUT, 'Parameter \'{}\' not a boolean as expected'.format(e['name']))
     elif e['type'] == 'str[]':
       if not isinstance(param, list):
         raise TMVException(TMVException.ID_FAULTY_INPUT, 'Parameter \'{}\' not a string array as expected'.format(e['name']))
@@ -234,6 +237,7 @@ async def tag(request):
 #   'value': STRING,
 #   ?'multi_tags': STRING[],
 #   ?'value_tags': [{'name': STRING, 'value': NUMBER}, ...],
+#   ?'all': boolean
 # }
 #
 # Expected response:
@@ -265,12 +269,75 @@ async def untag(request):
       'required': False,
       'type': 'val[]',
       'empty': False
+    }, {
+      'name': 'all',
+      'required': False,
+      'type': 'bool'
     }])
 
     value_tags = request_body['value_tags'] if 'value_tags' in request_body else []
     multi_tags = request_body['multi_tags'] if 'multi_tags' in request_body else []
+    all        = request_body['all'       ] if 'all'        in request_body else False
 
-    database.untag(request_body['value'], value_tags, multi_tags)
+    if all:
+      database.untag_all(request_body['value'])
+    else:
+      database.untag(request_body['value'], value_tags, multi_tags)
+    return json({'success': True})
+  except TMVException as e:
+    return error(e.error_id, e.error_msg)
+  except Exception as e:
+    print(traceback.print_exception(type(e), e, e.__traceback__))
+    return error(-1, 'Unknown error occured. Error type: \'{}\''.format(type(e).__name__))
+
+# Expected request format:
+#
+# {
+#   ?'values': [{'old': STRING, 'new': STRING}, ...]
+#   ?'value_tags': [{'old': {'name': STRING, 'value': INTEGER}, 'new': {'name': STRING, 'value': INTEGER}}, ...]
+#   ?'multi_tags': [{'old': STRING, 'new': STRING}, ...]
+# }
+#
+# Expected response:
+#
+# {
+#   ?'success': BOOLEAN,
+#   ?'error_id': INTEGER,
+#   ?'error_msg': STRING,
+# }
+@app.route('/rename', methods=['POST'])
+async def rename(request):
+  try:
+    request_body = request.json
+  except Exception as e:
+    return error(TMVException.ID_PARSE_JSON, 'Couldn\'t parse request body as JSON')
+
+  try:
+    verify_input(request_body, [{
+      'name': 'values',
+      'required': False,
+      'type': 'oldnew[]',
+      'empty': False
+    }, {
+      'name': 'multi_tags',
+      'required': False,
+      'type': 'oldnew[]',
+      'empty': False
+    }, {
+      'name': 'value_tags',
+      'required': False,
+      'type': 'oldnew-val[]',
+      'empty': False
+    }])
+
+    values    = request_body['values'    ] if 'values'     in request_body else []
+    multitags = request_body['multi_tags'] if 'multi_tags' in request_body else []
+    valuetags = request_body['value_tags'] if 'value_tags' in request_body else []
+
+    if len(values) < 1 and len(multitags) < 1 and len(valuetags) < 1:
+      raise TMVException(TMVException.ID_FAULTY_INPUT, 'At least one of the input fields \'values\', \'multi_tags\', \'value_tags\' has to not be empty')
+
+    database.rename(values, multitags, valuetags)
     return json({'success': True})
   except TMVException as e:
     return error(e.error_id, e.error_msg)
@@ -296,3 +363,4 @@ async def not_found_exception(request, exception):
 if __name__ == '__main__':
   database.create_tables()
   app.run(host='0.0.0.0', port=8000)
+

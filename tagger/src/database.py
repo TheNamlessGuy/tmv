@@ -408,3 +408,76 @@ def untag(tagged, value_tags, multi_tags):
       cur.close()
     if conn:
       conn.close()
+
+def untag_all(tagged):
+  conn = None
+  cur = None
+
+  try:
+    conn = open_connection()
+    cur = conn.cursor()
+    names = get_table_names()
+
+    cur.execute('SELECT id FROM ' + names['tagged'] + ' WHERE value = %s', (tagged,))
+    tagged_id = cur.fetchone()
+    if tagged_id is None:
+      raise TMVException(TMVException.ID_TAGGED_NOT_FOUND, 'The given value \'{}\' could not be found in the database'.format(tagged))
+    tagged_id = tagged_id[0]
+
+    # Value tags
+    cur.execute('DELETE FROM ' + names['tagged_valuetags'] + ' WHERE tagged_id = %s RETURNING tag_id', (tagged_id,))
+    value_tags = []
+    tag_id = cur.fetchone()
+    while tag_id:
+      value_tags.append(tag_id[0])
+      tag_id = cur.fetchone()
+
+    for value_tag in value_tags:
+      cur.execute('SELECT count(*) FROM ' + names['tagged_valuetags'] + ' WHERE tag_id = %s', (value_tag,))
+      if cur.fetchone()[0] < 1:
+        cur.execute('DELETE FROM ' + names['valuetags'] + ' WHERE id = %s', (value_tag,))
+
+    # Multitags
+    cur.execute('DELETE FROM ' + names['tagged_multitags'] + ' WHERE tagged_id = %s RETURNING tag_id', (tagged_id,))
+    multi_tags = []
+    tag_id = cur.fetchone()
+    while tag_id:
+      multi_tags.append(tag_id[0])
+      tag_id = cur.fetchone()
+
+    for multi_tag in multi_tags:
+      cur.execute('SELECT count(*) FROM ' + names['tagged_multitags'] + ' WHERE tag_id = %s', (multi_tag,))
+      if cur.fetchone()[0] < 1:
+        cur.execute('DELETE FROM ' + names['multitags'] + ' WHERE id = %s', (multi_tag,))
+
+    conn.commit()
+  finally:
+    if cur:
+      cur.close()
+    if conn:
+      conn.close()
+
+def rename(tagged, multitags, valuetags):
+  conn = None
+  cur = None
+
+  try:
+    conn = open_connection()
+    cur = conn.cursor()
+    names = get_table_names()
+
+    for t in tagged:
+      cur.execute('UPDATE ' + names['tagged'] + ' SET value = %s WHERE value = %s', (t['new'], t['old']))
+
+    for t in multitags:
+      cur.execute('UPDATE ' + names['multitags'] + ' SET value = %s WHERE value = %s', (t['new'], t['old']))
+
+    for t in valuetags:
+      cur.execute('UPDATE ' + names['valuetags'] + ' SET name = %s, value = %s WHERE name = %s AND value = %s', (t['new']['name'], t['new']['value'], t['old']['name'], t['old']['value']))
+
+    conn.commit()
+  finally:
+    if cur:
+      cur.close()
+    if conn:
+      conn.close()
