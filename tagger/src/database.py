@@ -15,12 +15,14 @@ def get_table_names():
   schema = env['TMV_DB_SCHEMA_NAME']
 
   retval = {}
-  retval['schema']           = schema
-  retval['multitags']        = schema + '.' + env['TMV_DB_MULTITAGS_TABLE_NAME']
-  retval['valuetags']        = schema + '.' + env['TMV_DB_VALUETAGS_TABLE_NAME']
-  retval['tagged']           = schema + '.' + env['TMV_DB_TAGGED_TABLE_NAME']
-  retval['tagged_multitags'] = schema + '.' + env['TMV_DB_TAGGED_MULTITAGS_BRIDGE_TABLE_NAME']
-  retval['tagged_valuetags'] = schema + '.' + env['TMV_DB_TAGGED_VALUETAGS_BRIDGE_TABLE_NAME']
+  retval['schema']              = schema
+  retval['multitags']           = schema + '.' + env['TMV_DB_MULTITAGS_TABLE_NAME']
+  retval['valuetags']           = schema + '.' + env['TMV_DB_VALUETAGS_TABLE_NAME']
+  retval['tagged']              = schema + '.' + env['TMV_DB_TAGGED_TABLE_NAME']
+  retval['tagged_multitags']    = schema + '.' + env['TMV_DB_TAGGED_MULTITAGS_BRIDGE_TABLE_NAME']
+  retval['tagged_valuetags']    = schema + '.' + env['TMV_DB_TAGGED_VALUETAGS_BRIDGE_TABLE_NAME']
+
+  retval['multitags_multitags'] = schema + '.' + env['TMV_DB_MULTITAGS_MULTITAGS_BRIDGE_TABLE_NAME']
 
   return retval
 
@@ -60,6 +62,7 @@ def create_tables():
     cur.execute('CREATE TABLE IF NOT EXISTS {} (id bigserial PRIMARY KEY, value text UNIQUE NOT NULL)'.format(names['tagged']))
     cur.execute('CREATE TABLE IF NOT EXISTS {} (tagged_id bigint NOT NULL REFERENCES {}(id), tag_id bigint NOT NULL REFERENCES {}(id), UNIQUE(tagged_id, tag_id))'.format(names['tagged_multitags'], names['tagged'], names['multitags']))
     cur.execute('CREATE TABLE IF NOT EXISTS {} (tagged_id bigint NOT NULL REFERENCES {}(id), tag_id bigint NOT NULL REFERENCES {}(id), UNIQUE(tagged_id, tag_id))'.format(names['tagged_valuetags'], names['tagged'], names['valuetags']))
+    cur.execute('CREATE TABLE IF NOT EXISTS {} (first_tag_id bigint NOT NULL REFERENCES {}(id), second_tag_id bigint NOT NULL REFERENCES {}(id), UNIQUE(first_tag_id, second_tag_id))'.format(names['multitags_multitags'], names['multitags'], names['multitags']))
     conn.commit()
   finally:
     if cur:
@@ -309,6 +312,20 @@ def get(tagged, value_tags, multi_tags):
     if conn:
       conn.close()
 
+def _get_implied_tags_for_multitag(multitag_id, cur, names, tags):
+  implied_tags = []
+  cur.execute('SELECT second_tag_id FROM ' + names['multitags_multitags'] + ' WHERE first_tag_id = %s', (multitag_id,))
+  response = cur.fetchone()
+  while response:
+    if not response[0] in tags:
+      implied_tags.append(response[0])
+    response = cur.fetchone()
+
+  # Only loop over tags not found previously
+  for implied_tag in implied_tags:
+    tags = _get_implied_tags_for_multitag(implied_tag, cur, names, tags + implied_tags)
+  return list(set(tags + implied_tags))
+
 def tag(tagged, value_tags, multi_tags):
   conn = None
   cur = None
@@ -352,7 +369,9 @@ def tag(tagged, value_tags, multi_tags):
         tag_id = cur.fetchone()
       tag_id = tag_id[0]
 
-      cur.execute('INSERT INTO ' + names['tagged_multitags'] + ' (tagged_id, tag_id) VALUES (%s, %s) ON CONFLICT DO NOTHING', (tagged_id, tag_id))
+      tag_ids = _get_implied_tags_for_multitag(tag_id, cur, names, [tag_id])
+      for tag_id in tag_ids:
+        cur.execute('INSERT INTO ' + names['tagged_multitags'] + ' (tagged_id, tag_id) VALUES (%s, %s) ON CONFLICT DO NOTHING', (tagged_id, tag_id))
 
     conn.commit()
   finally:
@@ -360,6 +379,28 @@ def tag(tagged, value_tags, multi_tags):
       cur.close()
     if conn:
       conn.close()
+
+def _remove_tagged_if_no_tags(tagged_id, cur, names):
+  cur.execute('SELECT COUNT(*) FROM ' + names['tagged_valuetags'] + ' WHERE tagged_id = %s', (tagged_id,))
+  value_count = cur.fetchone()[0]
+  cur.execute('SELECT COUNT(*) FROM ' + names['tagged_multitags'] + ' WHERE tagged_id = %s', (tagged_id,))
+  multi_count = cur.fetchone()[0]
+  if value_count == 0 and multi_count == 0:
+    cur.execute('DELETE FROM ' + names['tagged'] + ' WHERE id = %s', (tagged_id,))
+
+def _remove_multitag_if_unused(multitag_id, cur, names):
+  cur.execute('SELECT COUNT(*) FROM ' + names['tagged_multitags'] + ' WHERE tag_id = %s', (multitag_id,))
+  tagged_count = cur.fetchone()[0]
+  cur.execute('SELECT COUNT(*) FROM ' + names['multitags_multitags'] + ' WHERE first_tag_id = %s OR second_tag_id = %s', (multitag_id, multitag_id))
+  multi_multi_count = cur.fetchone()[0]
+  if tagged_count == 0 and multi_multi_count == 0:
+    cur.execute('DELETE FROM ' + names['multitags'] + ' WHERE id = %s', (multitag_id,))
+
+def _remove_valuetag_if_unused(valuetag_id, cur, names):
+  cur.execute('SELECT COUNT(*) FROM ' + names['tagged_valuetags'] + ' WHERE tag_id = %s', (valuetag_id,))
+  tagged_count = cur.fetchone()[0]
+  if tagged_count == 0:
+    cur.execute('DELETE FROM ' + names['valuetags'] + ' WHERE id = %s', (valuetag_id,))
 
 def untag(tagged, value_tags, multi_tags):
   conn = None
@@ -384,10 +425,7 @@ def untag(tagged, value_tags, multi_tags):
         continue # Tag could not be found
       tag_id = tag_id[0]
       cur.execute('DELETE FROM ' + names['tagged_valuetags'] + ' WHERE tagged_id = %s AND tag_id = %s', (tagged_id, tag_id))
-
-      cur.execute('SELECT COUNT(*) FROM ' + names['tagged_valuetags'] + ' WHERE tag_id = %s', (tag_id,))
-      if cur.fetchone()[0] < 1:
-        cur.execute('DELETE FROM ' + names['valuetags'] + ' WHERE id = %s', (tag_id,))
+      _remove_valuetag_if_unused(tag_id, cur, names)
 
     # Multi tags
     for tag in multi_tags:
@@ -397,11 +435,10 @@ def untag(tagged, value_tags, multi_tags):
         continue # Tag could not be found
       tag_id = tag_id[0]
       cur.execute('DELETE FROM ' + names['tagged_multitags'] + ' WHERE tagged_id = %s AND tag_id = %s', (tagged_id, tag_id))
+      _remove_multitag_if_unused(tag_id, cur, names)
 
-      cur.execute('SELECT COUNT(*) FROM ' + names['tagged_multitags'] + ' WHERE tag_id = %s', (tag_id,))
-      if cur.fetchone()[0] < 1:
-        cur.execute('DELETE FROM ' + names['multitags'] + ' WHERE id = %s', (tag_id,))
-
+    # Tagged
+    _remove_tagged_if_no_tags(tagged_id, cur, names)
     conn.commit()
   finally:
     if cur:
@@ -433,9 +470,7 @@ def untag_all(tagged):
       tag_id = cur.fetchone()
 
     for value_tag in value_tags:
-      cur.execute('SELECT count(*) FROM ' + names['tagged_valuetags'] + ' WHERE tag_id = %s', (value_tag,))
-      if cur.fetchone()[0] < 1:
-        cur.execute('DELETE FROM ' + names['valuetags'] + ' WHERE id = %s', (value_tag,))
+      _remove_valuetag_if_unused(value_tag, cur, names)
 
     # Multitags
     cur.execute('DELETE FROM ' + names['tagged_multitags'] + ' WHERE tagged_id = %s RETURNING tag_id', (tagged_id,))
@@ -446,9 +481,7 @@ def untag_all(tagged):
       tag_id = cur.fetchone()
 
     for multi_tag in multi_tags:
-      cur.execute('SELECT count(*) FROM ' + names['tagged_multitags'] + ' WHERE tag_id = %s', (multi_tag,))
-      if cur.fetchone()[0] < 1:
-        cur.execute('DELETE FROM ' + names['multitags'] + ' WHERE id = %s', (multi_tag,))
+      _remove_multitag_if_unused(multi_tag, cur, names)
 
     conn.commit()
   finally:
@@ -474,6 +507,184 @@ def rename(tagged, multitags, valuetags):
 
     for t in valuetags:
       cur.execute('UPDATE ' + names['valuetags'] + ' SET name = %s, value = %s WHERE name = %s AND value = %s', (t['new']['name'], t['new']['value'], t['old']['name'], t['old']['value']))
+
+    conn.commit()
+  finally:
+    if cur:
+      cur.close()
+    if conn:
+      conn.close()
+
+def tag_tags(multitags):
+  conn = None
+  cur = None
+
+  try:
+    conn = open_connection()
+    cur = conn.cursor()
+    names = get_table_names()
+
+    for parent_tag in multitags:
+      cur.execute('SELECT id FROM ' + names['multitags'] + ' WHERE value = %s', (parent_tag,))
+      parent_id = cur.fetchone()
+      if not parent_id:
+        continue # Tag couldn't be found
+      parent_id = parent_id[0]
+
+      for child_tag in multitags[parent_tag]:
+        cur.execute('SELECT id FROM ' + names['multitags'] + ' WHERE value = %s', (child_tag,))
+        child_id = cur.fetchone()
+        if not child_id:
+          cur.execute('INSERT INTO ' + names['multitags'] + ' (value) VALUES (%s) ON CONFLICT DO NOTHING RETURNING id', (child_tag,))
+          child_id = cur.fetchone()
+        child_id = child_id[0]
+        if parent_id == child_id:
+          continue # Can't tag self with self
+        cur.execute('INSERT INTO ' + names['multitags_multitags'] + ' (first_tag_id, second_tag_id) VALUES (%s, %s) ON CONFLICT DO NOTHING', (parent_id, child_id))
+
+    conn.commit()
+  finally:
+    if cur:
+      cur.close()
+    if conn:
+      conn.close()
+
+def get_tags(multi, value):
+  conn = None
+  cur = None
+
+  try:
+    conn = open_connection()
+    cur = conn.cursor()
+    names = get_table_names()
+    retval = {}
+
+    if multi:
+      retval['multi_tags'] = []
+      cur.execute('SELECT value FROM ' + names['multitags'])
+      response = cur.fetchone()
+      while response:
+        retval['multi_tags'].append(response[0])
+        response = cur.fetchone()
+
+    if value:
+      retval['value_tags'] = []
+      cur.execute('SELECT name, value FROM ' + names['valuetags'])
+      response = cur.fetchone()
+      while response:
+        retval['value_tags'].append({'name': response[0], 'value': response[1]})
+        response = cur.fetchone()
+
+    return retval
+  finally:
+    if cur:
+      cur.close()
+    if conn:
+      conn.close()
+
+def get_implied_tags(multitags):
+  conn = None
+  cur = None
+
+  try:
+    conn = open_connection()
+    cur = conn.cursor()
+    names = get_table_names()
+
+    retval = {'multi_tags': {}}
+    for multitag in multitags:
+      retval['multi_tags'][multitag] = []
+      cur.execute('SELECT id FROM ' + names['multitags'] + ' WHERE value = %s', (multitag,))
+      multi_id = cur.fetchone()
+      if not multi_id:
+        continue
+      multi_id = multi_id[0]
+
+      cur.execute('SELECT value FROM ' + names['multitags'] + ' WHERE id IN (SELECT second_tag_id FROM ' + names['multitags_multitags'] + ' WHERE first_tag_id = %s)', (multi_id,))
+      result = cur.fetchone()
+      while result:
+        retval['multi_tags'][multitag].append(result[0])
+        result = cur.fetchone()
+    return retval
+  finally:
+    if cur:
+      cur.close()
+    if conn:
+      conn.close()
+
+def untag_tags(multitags):
+  conn = None
+  cur = None
+
+  try:
+    conn = open_connection()
+    cur = conn.cursor()
+    names = get_table_names()
+
+    for parent_tag in multitags:
+      cur.execute('SELECT id FROM ' + names['multitags'] + ' WHERE value = %s', (parent_tag,))
+      parent_id = cur.fetchone()
+      if not parent_id:
+        continue
+      parent_id = parent_id[0]
+
+      if multitags[parent_tag] == 'all':
+        cur.execute('SELECT second_tag_id FROM ' + names['multitags_multitags'] + ' WHERE first_tag_id = %s', (parent_id,))
+        child_ids = []
+        response = cur.fetchone()
+        while response:
+          child_ids.append(response[0])
+          response = cur.fetchone()
+        cur.execute('DELETE FROM ' + names['multitags_multitags'] + ' WHERE first_tag_id = %s', (parent_id,))
+        for child_id in child_ids:
+          _remove_multitag_if_unused(child_id, cur, names)
+      else:
+        for child_tag in multitags[parent_tag]:
+          cur.execute('SELECT id FROM ' + names['multitags'] + ' WHERE value = %s', (child_tag,))
+          child_id = cur.fetchone()
+          if not child_id:
+            continue
+          child_id = child_id[0]
+          cur.execute('DELETE FROM ' + names['multitags_multitags'] + ' WHERE first_tag_id = %s AND second_tag_id = %s', (parent_id, child_id))
+          _remove_multitag_if_unused(child_id, cur, names)
+
+      _remove_multitag_if_unused(parent_id, cur, names)
+    conn.commit()
+  finally:
+    if cur:
+      cur.close()
+    if conn:
+      conn.close()
+
+def delete_tags(multi, value):
+  conn = None
+  cur = None
+
+  try:
+    conn = open_connection()
+    cur = conn.cursor()
+    names = get_table_names()
+
+    # Multitags
+    for tag in multi:
+      cur.execute('SELECT id FROM ' + names['multitags'] + ' WHERE value = %s', (tag,))
+      multi_id = cur.fetchone()
+      if not multi_id:
+        continue
+      multi_id = multi_id[0]
+      cur.execute('DELETE FROM ' + names['multitags_multitags'] + ' WHERE first_tag_id = %s OR second_tag_id = %s', (multi_id, multi_id))
+      cur.execute('DELETE FROM ' + names['tagged_multitags'] + ' WHERE tag_id = %s', (multi_id,))
+      cur.execute('DELETE FROM ' + names['multitags'] + ' WHERE id = %s', (multi_id,))
+
+    # Valuetags
+    for tag in value:
+      cur.execute('SELECT id FROM ' + names['valuetags'] + ' WHERE name = %s AND value = %s', (tag['name'], tag['value']))
+      value_id = cur.fetchone()
+      if not value_id:
+        continue
+      value_id = value_id[0]
+      cur.execute('DELETE FROM ' + names['tagged_valuetags'] + ' WHERE id = %s', (value_id,))
+      cur.execute('DELETE FROM ' + names['valuetags'] + ' WHERE id = %s', (value_id,))
 
     conn.commit()
   finally:

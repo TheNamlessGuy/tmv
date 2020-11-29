@@ -15,6 +15,10 @@ def error(error_id, error_msg):
     'error_msg': error_msg
   })
 
+def unknown_error(exception):
+  print(traceback.print_exception(type(exception), exception, exception.__traceback__))
+  return error(-1, 'Unknown error occured. Error type: \'{}\''.format(type(exception).__name__))
+
 # Expected format:
 #
 # [{
@@ -52,6 +56,22 @@ def verify_input(request, expected):
         for v in param:
           if not isinstance(v, str):
             raise TMVException(TMVException.ID_FAULTY_INPUT, 'Parameter \'{}\' not a string array as expected'.format(e['name']))
+    elif e['type'] == 'str:str[]':
+      if not isinstance(param, dict):
+        raise TMVException(TMVException.ID_FAULTY_INPUT, 'Parameter \'{}\' not a STRING: STRING[] dict as expectd'.format(e['name']))
+      if len(param) < 1 and not e['empty']:
+        raise TMVException(TMVException.ID_FAULTY_INPUT, 'Parameter \'{}\' cannot be empty'.format(e['name']))
+      for k in param:
+        if not isinstance(k, str):
+          raise TMVException(TMVException.ID_FAULTY_INPUT, 'Parameter \'{}\' not a STRING: STRING[] dict as expectd'.format(e['name']))
+        v = param[k]
+        if not isinstance(v, list):
+          raise TMVException(TMVException.ID_FAULTY_INPUT, 'Parameter \'{}\' not a STRING: STRING[] dict as expectd'.format(e['name']))
+        if len(v) < 1 and not e['empty']:
+          raise TMVException(TMVException.ID_FAULTY_INPUT, 'Parameter \'{}\' cannot have empty value lists'.format(e['name']))
+        for s in v:
+          if not isinstance(s, str):
+            raise TMVException(TMVException.ID_FAULTY_INPUT, 'Parameter \'{}\' not a STRING: STRING[] dict as expectd'.format(e['name']))
     elif e['type'] == 'str,str[]':
       if not isinstance(param, str):
         if not isinstance(param, list):
@@ -122,8 +142,7 @@ async def search(request):
   except TMVException as e:
     return error(e.error_id, e.error_msg)
   except Exception as e:
-    print(traceback.print_exception(type(e), e, e.__traceback__))
-    return error(-1, 'Unknown error occured. Error type: \'{}\''.format(type(e).__name__))
+    return unknown_error(e)
 
 # Expected request format:
 #
@@ -178,8 +197,47 @@ async def get(request):
   except TMVException as e:
     return error(e.error_id, e.error_msg)
   except Exception as e:
-    print(traceback.print_exception(type(e), e, e.__traceback__))
-    return error(-1, 'Unknown error occured. Error type: \'{}\''.format(type(e).__name__))
+    return unknown_error(e)
+
+# Expected request format:
+#
+# {
+#   'tags': [?'multi', ?'value']
+# }
+#
+# Expected response
+#
+# {
+#   ?'response': {
+#     'multi_tags': STRING[],
+#     'value_tags': [{'name': STRING, 'value': INTEGER}, ...]
+#   },
+#   ?'error_id': INTEGER,
+#   ?'error_msg': STRING,
+# }
+@app.route('/get-tags', methods=['POST'])
+async def get_tags(request):
+  try:
+    request_body = request.json
+  except Exception as e:
+    return error(TMVException.ID_PARSE_JSON, 'Couldn\'t parse request body as JSON')
+
+  try:
+    verify_input(request_body, [{
+      'name': 'tags',
+      'required': True,
+      'type': 'qtag[]',
+      'empty': False
+    }])
+
+    multi = 'multi' in request_body['tags']
+    value = 'value' in request_body['tags']
+    retval = database.get_tags(multi, value)
+    return json({'response': retval})
+  except TMVException as e:
+    return error(e.error_id, e.error_msg)
+  except Exception as e:
+    return unknown_error(e)
 
 # Expected request format:
 #
@@ -228,8 +286,7 @@ async def tag(request):
   except TMVException as e:
     return error(e.error_id, e.error_msg)
   except Exception as e:
-    print(traceback.print_exception(type(e), e, e.__traceback__))
-    return error(-1, 'Unknown error occured. Error type: \'{}\''.format(type(e).__name__))
+    return unknown_error(e)
 
 # Expected request format:
 #
@@ -287,8 +344,51 @@ async def untag(request):
   except TMVException as e:
     return error(e.error_id, e.error_msg)
   except Exception as e:
-    print(traceback.print_exception(type(e), e, e.__traceback__))
-    return error(-1, 'Unknown error occured. Error type: \'{}\''.format(type(e).__name__))
+    return unknown_error(e)
+
+# Expected request format:
+#
+# {
+#   ?'multi_tags': STRING[],
+#   ?'value_tags': [{'name': string, 'value': INTEGER}, ...]
+# }
+#
+# Expected response:
+#
+# {
+#   ?'success': BOOLEAN,
+#   ?'error_id': INTEGER,
+#   ?'error_msg': STRING,
+# }
+@app.route('/delete-tags', methods=['POST'])
+async def delete_tags(request):
+  try:
+    request_body = request.json
+  except Exception as e:
+    return error(TMVException.ID_PARSE_JSON, 'Couldn\'t parse request body as JSON')
+
+  try:
+    verify_input(request_body, [{
+      'name': 'multi_tags',
+      'required': False,
+      'type': 'str[]',
+      'empty': False,
+    }, {
+      'name': 'value_tags',
+      'required': False,
+      'type': 'val[]',
+      'empty': False,
+    }])
+
+    multi = request_body['multi_tags'] if 'multi_tags' in request_body else []
+    value = request_body['value_tags'] if 'value_tags' in request_body else []
+
+    database.delete_tags(multi, value)
+    return json({'success': True})
+  except TMVException as e:
+    return error(e.error_id, e.error_msg)
+  except Exception as e:
+    return unknown_error(e)
 
 # Expected request format:
 #
@@ -342,23 +442,129 @@ async def rename(request):
   except TMVException as e:
     return error(e.error_id, e.error_msg)
   except Exception as e:
-    print(traceback.print_exception(type(e), e, e.__traceback__))
-    return error(-1, 'Unknown error occured. Error type: \'{}\''.format(type(e).__name__))
+    return unknown_error(e)
+
+# Expected request format
+#
+# {
+#   'multi_tags': {
+#     <multitag>: STRING[]
+#   },
+# }
+#
+# Expected response:
+#
+# {
+#   ?'success': BOOLEAN,
+#   ?'error_id': INTEGER,
+#   ?'error_msg': STRING,
+# }
+@app.route('/tag-tags', methods=['POST'])
+async def tag_tags(request):
+  try:
+    request_body = request.json
+  except Exception as e:
+    return error(TMVException.ID_PARSE_JSON, 'Couldn\'t parse request body as JSON')
+
+  try:
+    verify_input(request_body, [{
+      'name': 'multi_tags',
+      'required': True,
+      'type': 'str:str[]',
+      'empty': False
+    }])
+
+    database.tag_tags(request_body['multi_tags'])
+    return json({'success': True})
+  except TMVException as e:
+    return error(e.error_id, e.error_msg)
+  except Exception as e:
+    return unknown_error(e)
+
+# Expected request format
+#
+# {
+#   'multi_tags': STRING[]
+# }
+#
+# Expected response:
+#
+# {
+#   ?'response': {
+#     'multi_tags': {
+#       <tag>: STRING[]
+#     }
+#   }
+#   ?'error_id': INTEGER,
+#   ?'error_msg': STRING,
+# }
+@app.route('/get-related-tags', methods=['POST'])
+async def get_related_tags(request):
+  try:
+    request_body = request.json
+  except Exception as e:
+    return error(TMVException.ID_PARSE_JSON, 'Couldn\'t parse request body as JSON')
+  try:
+    verify_input(request_body, [{
+      'name': 'multi_tags',
+      'required': True,
+      'type': 'str[]',
+      'empty': False
+    }])
+
+    retval = database.get_implied_tags(request_body['multi_tags'])
+    return json({'response': retval})
+  except TMVException as e:
+    return error(e.error_id, e.error_msg)
+  except Exception as e:
+    return unknown_error(e)
+
+# Expected request format
+#
+# {
+#   'multi_tags': {
+#     ?<multitag>: STRING[]
+#     ?<multitag>: 'all'
+#   },
+# }
+#
+# Expected response:
+#
+# {
+#   ?'success': BOOLEAN,
+#   ?'error_id': INTEGER,
+#   ?'error_msg': STRING,
+# }
+@app.route('/untag-tags', methods=['POST'])
+async def untag_tags(request):
+  try:
+    request_body = request.json
+  except Exception as e:
+    return error(TMVException.ID_PARSE_JSON, 'Couldn\'t parse request body as JSON')
+
+  try:
+    verify_input(request_body, [{
+      'name': 'multi_tags',
+      'required': True,
+      'type': 'str:str[]',
+      'empty': False
+    }])
+
+    database.untag_tags(request_body['multi_tags'])
+    return json({'success': True})
+  except TMVException as e:
+    return error(e.error_id, e.error_msg)
+  except Exception as e:
+    return unknown_error(e)
 
 # Exception handlers
 @app.exception(NotFound)
 async def not_found_exception(request, exception):
-  return json({
-    'error_id': TMVException.ID_404,
-    'error_msg': 'Endpoint not found'
-  })
+  return error(TMVException.ID_404, 'Endpoint not found')
 
 @app.exception(MethodNotSupported)
 async def not_found_exception(request, exception):
-  return json({
-    'error_id': TMVException.ID_405,
-    'error_msg': 'Method \'{}\' is not supported. The TMV tagger only supports POST requests.'.format(request.method)
-  })
+  return error(TMVException.ID_405, 'Method \'{}\' is not supported. The TMV tagger only supports POST requests.'.format(request.method))
 
 if __name__ == '__main__':
   database.create_tables()
