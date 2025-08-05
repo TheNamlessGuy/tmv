@@ -73,3 +73,6 @@ Any tag that doesn't fit into value tags
 Value tags are for tags that have static names, but variable values ("timestamp:1599902790", "rating:5", etc.). These will be stored as many-to-many relations, with the name of the tag and the value being separate values.  
 
 NOTE: Values will always be found at the end of value tags.
+
+## Cross-hosted
+This repository is hosted both on [GitHub](https://github.com/TheNamlessGuy/tmv) and [Codeberg](https://codeberg.org/TheNamlessGuy/tmv).
